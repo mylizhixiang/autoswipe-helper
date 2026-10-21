@@ -1,11 +1,8 @@
 # 把 main 分支（含 tag）镜像到 Gitee，保持两边一致。
 #
-# 用之前只需要做一次：
-#   1. 在 Gitee 建好同名仓库（空仓库，不要初始化 README）
-#   2. Gitee → 设置 → 私人令牌：新建一个令牌，勾上 projects 权限，复制出来
-#   3. 本仓库 → Settings → Secrets and variables → Actions → New repository secret
-#      名字填 GITEE_TOKEN，值粘贴令牌
-# 没配 GITEE_TOKEN 时工作流会直接跳过，不会报红。
+# 已经配好了：Gitee 仓库 l1107664795/autoswipe-helper，令牌存在本仓库的
+# Settings → Secrets and variables → Actions → GITEE_TOKEN 里。
+# 换令牌时只改那个 secret 即可；没配 secret 时工作流会直接跳过，不会报红。
 name: Mirror to Gitee
 
 on:
@@ -25,7 +22,7 @@ jobs:
       - name: Push to Gitee
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          GITEE_USER: mylizhixiang
+          GITEE_USER: l1107664795
           GITEE_REPO: autoswipe-helper
         run: |
           if [ -z "$GITEE_TOKEN" ]; then

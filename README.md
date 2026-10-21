@@ -14,7 +14,8 @@
 | --- | --- |
 | 最新版（GitHub） | https://github.com/mylizhixiang/autoswipe-helper/releases |
 | 1.1 直链 | https://github.com/mylizhixiang/autoswipe-helper/releases/latest/download/AutoSwipeHelper-1.1.apk |
-| Gitee 镜像 | https://gitee.com/mylizhixiang/autoswipe-helper |
+| Gitee 镜像（国内下载更快） | https://gitee.com/l1107664795/autoswipe-helper/releases |
+| Gitee 直链 | https://gitee.com/l1107664795/autoswipe-helper/releases/download/v1.1/AutoSwipeHelper-1.1.apk |
 
 把 `AutoSwipeHelper-x.x.apk` 传到手机，点击安装即可（手机可能会提示「未知来源」，选择允许）。
 
