@@ -1,15 +1,25 @@
-# 把 main 分支（含 tag）镜像到 Gitee，保持两边一致。
+# 把 main 分支（含 tag）镜像到 Gitee；打 tag 发新版时，再把 GitHub Release 里的 APK
+# 同步到 Gitee 的「发行版」，让两边版本保持一致。
 #
 # 已经配好了：Gitee 仓库 l1107664795/autoswipe-helper，令牌存在本仓库的
 # Settings → Secrets and variables → Actions → GITEE_TOKEN 里。
 # 换令牌时只改那个 secret 即可；没配 secret 时工作流会直接跳过，不会报红。
+#
+# 发新版顺序：改版本号 → 推送 main → 打 tag vX.Y 并推送 → 在 GitHub 建 Release 上传 APK。
+# 本工作流会自动在 Gitee 建同名发行版并传同一个 APK，重复跑不会重复建、重复传。
 name: Mirror to Gitee
 
 on:
   push:
     branches: [main]
     tags: ["v*"]
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 要同步到 Gitee 的版本标签（留空就用最新 tag）
+        required: false
 
 jobs:
   mirror:
@@ -33,3 +43,110 @@ jobs:
           git push --force --tags \
             "https://${GITEE_USER}:${GITEE_TOKEN}@gitee.com/${GITEE_USER}/${GITEE_REPO}.git" \
             "HEAD:refs/heads/main"
+
+  gitee-release:
+    needs: mirror
+    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+      GITEE_USER: l1107664795
+      GITEE_REPO: autoswipe-helper
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 确定版本标签
+        id: v
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          TAG=""
+          if [ "$EVENT_NAME" = "release" ]; then
+            TAG="$EVENT_TAG"
+          elif [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          elif [ "${GITHUB_REF#refs/tags/}" != "$GITHUB_REF" ]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            git fetch --tags --force --quiet || true
+            TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "目标标签：${TAG:-没找到，跳过}"
+
+      - name: 从 GitHub Release 取 APK
+        id: fetch
+        if: env.GITEE_TOKEN != '' && steps.v.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          mkdir -p apk
+          HAVE=0
+          for i in $(seq 1 20); do
+            if gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p "*.apk" -D apk --clobber >/dev/null 2>&1 \
+               && ls apk/*.apk >/dev/null 2>&1; then
+              HAVE=1
+              break
+            fi
+            echo "第 $i 次没取到 GitHub Release 的 APK，30 秒后重试"
+            sleep 30
+          done
+          echo "have=$HAVE" >> "$GITHUB_OUTPUT"
+          if [ "$HAVE" = "1" ]; then
+            ls -l apk
+          else
+            echo "::warning::没等到 GitHub Release 的 APK，本次只同步发行版信息"
+          fi
+
+      - name: 在 Gitee 建同名发行版并上传 APK
+        if: env.GITEE_TOKEN != '' && steps.v.outputs.tag != ''
+        env:
+          TAG: ${{ steps.v.outputs.tag }}
+          HAVE_APK: ${{ steps.fetch.outputs.have }}
+        run: |
+          set -euo pipefail
+          API="https://gitee.com/api/v5/repos/${GITEE_USER}/${GITEE_REPO}"
+
+          REL_ID="$(curl -sS "$API/releases?access_token=${GITEE_TOKEN}&per_page=100" \
+            | jq -r --arg t "$TAG" '.[] | select(.tag_name == $t) | .id' | head -n 1)"
+
+          if [ -z "$REL_ID" ] || [ "$REL_ID" = "null" ]; then
+            echo "Gitee 上还没有 $TAG 的发行版，新建一个"
+            REL_ID="$(curl -sS -X POST "$API/releases" --fail-with-body \
+              --data-urlencode "access_token=${GITEE_TOKEN}" \
+              --data-urlencode "tag_name=${TAG}" \
+              --data-urlencode "name=自动上滑助手 ${TAG}" \
+              --data-urlencode "body=与 GitHub 版本一致，安装包来自 GitHub Release ${TAG}。" \
+              --data-urlencode "target_commitish=main" \
+              --data-urlencode "prerelease=false" \
+              | jq -r '.id // empty')"
+          fi
+
+          if [ -z "$REL_ID" ] || [ "$REL_ID" = "null" ]; then
+            echo "::error::创建 Gitee 发行版失败"
+            exit 1
+          fi
+          echo "Gitee 发行版 id=${REL_ID}"
+
+          if [ "${HAVE_APK:-0}" != "1" ]; then
+            echo "::warning::没有可上传的 APK，跳过附件"
+            exit 0
+          fi
+
+          for f in apk/*.apk; do
+            NAME="$(basename "$f")"
+            if curl -sS "$API/releases/${REL_ID}?access_token=${GITEE_TOKEN}" \
+               | jq -e --arg n "$NAME" '.assets[]? | select(.name == $n)' >/dev/null; then
+              echo "${NAME} 已存在，跳过上传"
+            else
+              echo "上传 ${NAME}"
+              curl -sS -X POST "$API/releases/${REL_ID}/attach_files" --fail-with-body \
+                -F "access_token=${GITEE_TOKEN}" \
+                -F "file=@${f}" | jq -r '.name // .message? // "已上传"'
+            fi
+          done
