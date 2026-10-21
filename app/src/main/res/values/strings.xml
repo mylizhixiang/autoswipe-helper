@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">自动上滑助手</string>
+    <string name="service_label">自动上滑助手</string>
+    <string name="service_description">在短剧 / 听书类 App 播放广告结束后或播放卡住时，自动上滑切换到下一集。只在本机读取屏幕文字，不联网、不修改任何 App。</string>
+</resources>
